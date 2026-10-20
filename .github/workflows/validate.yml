@@ -1,0 +1,26 @@
+# Checks this repository's own templates: YAML syntax for every file,
+# and actionlint for the GitHub Actions workflows.
+name: Validate templates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: YAML lint
+        run: |
+          yamllint -d "{extends: relaxed, rules: {line-length: disable}}" github-actions gitlab-ci .github
+
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color github-actions/*.yml .github/workflows/*.yml
