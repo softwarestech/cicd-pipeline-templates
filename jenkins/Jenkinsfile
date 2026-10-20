@@ -1,0 +1,55 @@
+// Declarative Jenkins pipeline: test, build and push a Docker image,
+// then deploy to Kubernetes after a manual approval.
+// Needs the Docker Pipeline and Kubernetes CLI plugins, plus credentials
+// named "registry-creds" and "kubeconfig-prod".
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        REGISTRY = 'registry.example.com'
+        IMAGE    = "${REGISTRY}/my-app:${env.GIT_COMMIT.take(7)}"
+    }
+
+    stages {
+        stage('Test') {
+            agent { docker { image 'node:22-alpine' } }
+            steps {
+                sh 'npm ci'
+                sh 'npm run lint --if-present'
+                sh 'npm test --if-present'
+            }
+        }
+
+        stage('Build and push image') {
+            when { branch 'main' }
+            steps {
+                script {
+                    docker.withRegistry("https://${REGISTRY}", 'registry-creds') {
+                        docker.build(env.IMAGE).push()
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to production') {
+            when { branch 'main' }
+            steps {
+                input message: "Deploy ${env.IMAGE} to production?", ok: 'Deploy'
+                withKubeConfig(credentialsId: 'kubeconfig-prod') {
+                    sh "kubectl set image deployment/app app=${env.IMAGE}"
+                    sh 'kubectl rollout status deployment/app --timeout=180s'
+                }
+            }
+        }
+    }
+
+    post {
+        always { cleanWs() }
+    }
+}
