@@ -1,0 +1,48 @@
+# GitLab CI: test a Node.js app, build a Docker image into the project's
+# container registry, and deploy to Kubernetes after a manual approval.
+# Copy to .gitlab-ci.yml in your project root.
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+
+test:
+  stage: test
+  image: node:22-alpine
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm/]
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint --if-present
+    - npm test --if-present
+
+build-image:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$IMAGE" .
+    - docker push "$IMAGE"
+
+deploy-production:
+  stage: deploy
+  image: bitnami/kubectl:1.31
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  script:
+    # KUBE_CONTEXT comes from a GitLab agent for Kubernetes connected to this project.
+    - kubectl config use-context "$KUBE_CONTEXT"
+    - kubectl set image deployment/app app="$IMAGE"
+    - kubectl rollout status deployment/app --timeout=180s
